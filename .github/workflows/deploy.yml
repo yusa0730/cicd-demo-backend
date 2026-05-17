@@ -1,0 +1,144 @@
+name: deploy
+
+on:
+  push:
+    branches:
+      - develop
+
+concurrency:
+  group: deploy-${{ vars.ENV || 'dev' }}
+  cancel-in-progress: false
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AWS_REGION: ${{ vars.AWS_REGION || 'ap-northeast-1' }}
+
+jobs:
+  deploy:
+    name: Deploy to ${{ vars.ENV || 'dev' }}
+    runs-on: ubuntu-latest
+    environment: ${{ vars.ENV || 'dev' }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      # ── 1. Read infra values from SSM Parameter Store ─────────────────────
+      # terraform-repo writes these on every apply. app-repo never hardcodes them.
+      - name: Get infra values from SSM
+        env:
+          PREFIX: ${{ vars.SSM_PREFIX }}
+        run: |
+          get() { aws ssm get-parameter --name "$PREFIX/$1" --query Parameter.Value --output text; }
+
+          echo "ECR_REPOSITORY_URL=$(get ecr-repository-url)"     >> $GITHUB_ENV
+          echo "ECS_CLUSTER=$(get ecs-cluster-name)"              >> $GITHUB_ENV
+          echo "ECS_SERVICE=$(get ecs-service-name)"              >> $GITHUB_ENV
+          echo "TASK_DEF_FAMILY=$(get task-definition-family)"    >> $GITHUB_ENV
+          echo "SUBNET_IDS=$(get ecs-subnet-ids)"                 >> $GITHUB_ENV
+          echo "SECURITY_GROUP_ID=$(get ecs-security-group-id)"  >> $GITHUB_ENV
+          echo "ALB_DNS_NAME=$(get alb-dns-name)"                 >> $GITHUB_ENV
+
+      # ── 2. Build and push Docker image ────────────────────────────────────
+      - name: Login to ECR
+        run: |
+          aws ecr get-login-password --region "$AWS_REGION" \
+            | docker login --username AWS --password-stdin "$ECR_REPOSITORY_URL"
+
+      - name: Build and push image
+        run: |
+          IMAGE_URI="${ECR_REPOSITORY_URL}:${GITHUB_SHA}"
+          docker build -t "$IMAGE_URI" .
+          docker push "$IMAGE_URI"
+          echo "IMAGE_URI=$IMAGE_URI" >> $GITHUB_ENV
+
+      # ── 3. DB migration as ECS one-off task ───────────────────────────────
+      # Uses the newly built image with command override.
+      # ECS service deploy is skipped if this step fails.
+      - name: Run DB migration
+        run: |
+          TASK_ARN=$(aws ecs run-task \
+            --cluster "$ECS_CLUSTER" \
+            --launch-type FARGATE \
+            --task-definition "$TASK_DEF_FAMILY" \
+            --network-configuration \
+              "awsvpcConfiguration={subnets=[$SUBNET_IDS],securityGroups=[$SECURITY_GROUP_ID],assignPublicIp=ENABLED}" \
+            --overrides "{
+              \"containerOverrides\": [
+                {
+                  \"name\": \"app\",
+                  \"image\": \"$IMAGE_URI\",
+                  \"command\": [\"npm\", \"run\", \"migrate\"]
+                }
+              ]
+            }" \
+            --query "tasks[0].taskArn" \
+            --output text)
+
+          echo "migration task: $TASK_ARN"
+
+          aws ecs wait tasks-stopped \
+            --cluster "$ECS_CLUSTER" \
+            --tasks "$TASK_ARN"
+
+          EXIT_CODE=$(aws ecs describe-tasks \
+            --cluster "$ECS_CLUSTER" \
+            --tasks "$TASK_ARN" \
+            --query "tasks[0].containers[0].exitCode" \
+            --output text)
+
+          if [ "$EXIT_CODE" != "0" ]; then
+            echo "::error::DB migration failed (exit code: $EXIT_CODE)"
+            exit 1
+          fi
+
+          echo "DB migration succeeded"
+
+      # ── 4. Deploy ECS service ─────────────────────────────────────────────
+      # Fetch current task definition from AWS (Terraform manages the base config),
+      # replace only the image, register a new revision, and deploy.
+      - name: Download current task definition
+        run: |
+          aws ecs describe-task-definition \
+            --task-definition "$TASK_DEF_FAMILY" \
+            --query taskDefinition \
+            > task-definition.json
+
+      - name: Render task definition with new image
+        id: render
+        uses: aws-actions/amazon-ecs-render-task-definition@v1
+        with:
+          task-definition: task-definition.json
+          container-name: app
+          image: ${{ env.IMAGE_URI }}
+
+      - name: Deploy ECS service
+        uses: aws-actions/amazon-ecs-deploy-task-definition@v2
+        with:
+          task-definition: ${{ steps.render.outputs.task-definition }}
+          service: ${{ env.ECS_SERVICE }}
+          cluster: ${{ env.ECS_CLUSTER }}
+          wait-for-service-stability: true
+
+      # ── 5. Smoke test ─────────────────────────────────────────────────────
+      - name: Smoke test
+        run: |
+          for i in $(seq 1 5); do
+            STATUS=$(curl -s -o /dev/null -w "%{http_code}" "http://${ALB_DNS_NAME}/health")
+            if [ "$STATUS" = "200" ]; then
+              echo "smoke test passed (attempt $i)"
+              exit 0
+            fi
+            echo "attempt $i: HTTP $STATUS — retrying in 10s"
+            sleep 10
+          done
+          echo "::error::smoke test failed after 5 attempts"
+          exit 1
