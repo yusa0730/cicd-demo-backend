@@ -4,9 +4,11 @@ on:
   push:
     branches:
       - develop
+      - stg
+      - prod
 
 concurrency:
-  group: deploy-${{ vars.ENV || 'dev' }}
+  group: deploy-${{ github.ref_name }}
   cancel-in-progress: false
 
 permissions:
@@ -15,15 +17,35 @@ permissions:
 
 env:
   AWS_REGION: ${{ vars.AWS_REGION || 'ap-northeast-1' }}
-
-env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
-  deploy:
-    name: Deploy to ${{ vars.ENV || 'dev' }}
+  resolve-environment:
     runs-on: ubuntu-latest
-    environment: ${{ vars.ENV || 'dev' }}
+    outputs:
+      environment: ${{ steps.resolve.outputs.environment }}
+    steps:
+      - name: Resolve target environment
+        id: resolve
+        run: |
+          case "${{ github.ref_name }}" in
+            develop) echo "environment=dev"  >> "$GITHUB_OUTPUT" ;;
+            stg)     echo "environment=stg"  >> "$GITHUB_OUTPUT" ;;
+            prod)    echo "environment=prod" >> "$GITHUB_OUTPUT" ;;
+            *)
+              echo "Unsupported branch: ${{ github.ref_name }}"
+              exit 1
+              ;;
+          esac
+
+  deploy:
+    needs: resolve-environment
+    name: Deploy to ${{ needs.resolve-environment.outputs.environment }}
+    runs-on: ubuntu-latest
+    environment: ${{ needs.resolve-environment.outputs.environment }}
+
+    env:
+      ENVIRONMENT: ${{ needs.resolve-environment.outputs.environment }}
 
     steps:
       - uses: actions/checkout@v6.0.2
