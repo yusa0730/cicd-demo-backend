@@ -60,7 +60,8 @@ jobs:
       # terraform-repo writes these on every apply. app-repo never hardcodes them.
       - name: Get infra values from SSM
         env:
-          PREFIX: ${{ vars.SSM_PREFIX }}
+          # /ecs-demo/dev, /ecs-demo/prod ... — Terraform が書き込むパスと一致させる
+          PREFIX: /${{ vars.PROJECT || 'ecs-demo' }}/${{ env.ENVIRONMENT }}
         run: |
           get() { aws ssm get-parameter --name "$PREFIX/$1" --with-decryption --query Parameter.Value --output text; }
 
