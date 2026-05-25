@@ -100,10 +100,21 @@ jobs:
 
       - name: Build and push image
         run: |
+          set -euo pipefail
           IMAGE_URI="${ECR_REPOSITORY_URL}:${GITHUB_SHA}"
-          docker build -t "$IMAGE_URI" .
-          docker push "$IMAGE_URI"
-          echo "IMAGE_URI=$IMAGE_URI" >> $GITHUB_ENV
+          ECR_REPO_NAME="$(basename "$ECR_REPOSITORY_URL")"
+
+          if aws ecr describe-images \
+              --repository-name "$ECR_REPO_NAME" \
+              --image-ids imageTag="${GITHUB_SHA}" \
+              --region "$AWS_REGION" > /dev/null 2>&1; then
+            echo "Image already exists in ECR, skipping build and push: $IMAGE_URI"
+          else
+            docker build -t "$IMAGE_URI" .
+            docker push "$IMAGE_URI"
+          fi
+
+          echo "IMAGE_URI=$IMAGE_URI" >> "$GITHUB_ENV"
 
       # ── 3. Register new ECS task definition ──────────────────────────────
       # image は containerOverrides で上書き不可のため、新リビジョンを登録してから使う。
