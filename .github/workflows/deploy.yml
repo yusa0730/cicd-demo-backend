@@ -60,17 +60,37 @@ jobs:
       # terraform-repo writes these on every apply. app-repo never hardcodes them.
       - name: Get infra values from SSM
         env:
-          PREFIX: ${{ vars.SSM_PREFIX }}
+          PREFIX: /ecs-demo/${{ env.ENVIRONMENT }}
         run: |
-          get() { aws ssm get-parameter --name "$PREFIX/$1" --with-decryption --query Parameter.Value --output text; }
+          set -euo pipefail
+          echo "Using SSM prefix: $PREFIX"
 
-          echo "ECR_REPOSITORY_URL=$(get ecr-repository-url)"     >> $GITHUB_ENV
-          echo "ECS_CLUSTER=$(get ecs-cluster-name)"              >> $GITHUB_ENV
-          echo "ECS_SERVICE=$(get ecs-service-name)"              >> $GITHUB_ENV
-          echo "TASK_DEF_FAMILY=$(get task-definition-family)"    >> $GITHUB_ENV
-          echo "SUBNET_IDS=$(get ecs-subnet-ids)"                 >> $GITHUB_ENV
-          echo "SECURITY_GROUP_ID=$(get ecs-security-group-id)"  >> $GITHUB_ENV
-          echo "ALB_DNS_NAME=$(get alb-dns-name)"                 >> $GITHUB_ENV
+          get() {
+            aws ssm get-parameter \
+              --name "$PREFIX/$1" \
+              --with-decryption \
+              --query "Parameter.Value" \
+              --output text
+          }
+
+          echo "ECR_REPOSITORY_URL=$(get ecr-repository-url)"    >> "$GITHUB_ENV"
+          echo "ECS_CLUSTER=$(get ecs-cluster-name)"             >> "$GITHUB_ENV"
+          echo "ECS_SERVICE=$(get ecs-service-name)"             >> "$GITHUB_ENV"
+          echo "TASK_DEF_FAMILY=$(get task-definition-family)"   >> "$GITHUB_ENV"
+          echo "SUBNET_IDS=$(get ecs-subnet-ids)"                >> "$GITHUB_ENV"
+          echo "SECURITY_GROUP_ID=$(get ecs-security-group-id)"  >> "$GITHUB_ENV"
+          echo "ALB_DNS_NAME=$(get alb-dns-name)"                >> "$GITHUB_ENV"
+
+      - name: Validate infra values
+        run: |
+          set -euo pipefail
+          : "${ECR_REPOSITORY_URL:?ECR_REPOSITORY_URL is empty}"
+          : "${ECS_CLUSTER:?ECS_CLUSTER is empty}"
+          : "${ECS_SERVICE:?ECS_SERVICE is empty}"
+          : "${TASK_DEF_FAMILY:?TASK_DEF_FAMILY is empty}"
+          : "${SUBNET_IDS:?SUBNET_IDS is empty}"
+          : "${SECURITY_GROUP_ID:?SECURITY_GROUP_ID is empty}"
+          : "${ALB_DNS_NAME:?ALB_DNS_NAME is empty}"
 
       # ── 2. Build and push Docker image ────────────────────────────────────
       - name: Login to ECR
