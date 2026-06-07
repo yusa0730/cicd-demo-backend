@@ -6,9 +6,9 @@ COPY prisma ./prisma
 RUN npm run codegen
 
 FROM deps AS build
-COPY tsconfig.json tsconfig.build.json nest-cli.json ./
+COPY tsconfig.json tsconfig.build.json tsconfig.seed.json nest-cli.json ./
 COPY src ./src
-RUN npm run build
+RUN npm run build && npx tsc -p tsconfig.seed.json
 
 FROM public.ecr.aws/docker/library/node:22-bookworm-slim AS runtime
 WORKDIR /app
