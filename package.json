@@ -12,7 +12,8 @@
     "codegen": "prisma generate",
     "migrate": "prisma migrate deploy",
     "migrate:prod": "node dist/migrate.js",
-    "migrate:dev": "prisma migrate dev"
+    "migrate:dev": "prisma migrate dev",
+    "seed": "node dist/prisma/seed.js"
   },
   "dependencies": {
     "@nestjs/common": "^10.4.13",
