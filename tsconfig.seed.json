@@ -1,5 +1,9 @@
 {
   "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "rootDir": ".",
+    "incremental": false
+  },
   "include": ["prisma"],
   "exclude": ["node_modules"]
 }
