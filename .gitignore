@@ -1,0 +1,22 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+tsconfig.build.tsbuildinfo
+tsconfig.tsbuildinfo
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Compiled files that should not be committed
+prisma/**/*.js
+prisma/**/*.js.map
+prisma/**/*.d.ts
+
+# OS / Editor
+.DS_Store
+.idea/
+.vscode/

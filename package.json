@@ -1,22 +1,36 @@
 {
   "name": "ecs-migration-demo",
   "version": "1.0.0",
+  "prisma": {
+    "seed": "tsx prisma/seed.ts"
+  },
   "scripts": {
-    "dev": "tsx src/index.ts",
-    "build": "tsc",
-    "start": "node dist/index.js",
-    "migrate": "node dist/migrate.js",
-    "migrate:dev": "tsx src/migrate.ts"
+    "build": "nest build",
+    "start": "nest start",
+    "start:dev": "nest start --watch",
+    "start:prod": "node dist/main",
+    "codegen": "prisma generate",
+    "migrate": "prisma migrate deploy",
+    "migrate:prod": "node dist/migrate.js",
+    "migrate:dev": "prisma migrate dev"
   },
   "dependencies": {
-    "@hono/node-server": "^1.14.0",
-    "hono": "^4.7.0",
-    "pg": "^8.13.0"
+    "@nestjs/common": "^10.4.13",
+    "@nestjs/core": "^10.4.13",
+    "@nestjs/platform-express": "^10.4.3",
+    "@prisma/client": "^6.1.0",
+    "class-transformer": "^0.5.1",
+    "class-validator": "^0.14.1",
+    "prisma": "^6.6.0",
+    "reflect-metadata": "^0.2.2",
+    "rxjs": "^7.8.1",
+    "tsx": "^4.19.0"
   },
   "devDependencies": {
+    "@nestjs/cli": "^10.4.7",
+    "@nestjs/schematics": "^10.2.3",
+    "@types/express": "^5.0.0",
     "@types/node": "^22.0.0",
-    "@types/pg": "^8.11.0",
-    "tsx": "^4.19.0",
     "typescript": "^5.8.0"
   }
 }
