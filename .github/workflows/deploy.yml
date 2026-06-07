@@ -153,7 +153,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          TASK_ARN=$(aws ecs run-task \
+          aws ecs run-task \
             --cluster "$ECS_CLUSTER" \
             --launch-type FARGATE \
             --task-definition "$NEW_TASK_DEF_ARN" \
@@ -167,25 +167,40 @@ jobs:
                 }
               ]
             }" \
-            --query "tasks[0].taskArn" \
-            --output text)
+            --output json > run-task-result.json
 
-          echo "migration task: $TASK_ARN"
+          TASK_ARN=$(jq -r '.tasks[0].taskArn // empty' run-task-result.json)
 
-          if [ "$TASK_ARN" = "None" ] || [ -z "$TASK_ARN" ]; then
+          if [ -z "$TASK_ARN" ]; then
             echo "::error::Failed to start migration task"
+            jq '.failures' run-task-result.json
             exit 1
           fi
+
+          echo "migration task: $TASK_ARN"
 
           aws ecs wait tasks-stopped \
             --cluster "$ECS_CLUSTER" \
             --tasks "$TASK_ARN"
 
-          EXIT_CODE=$(aws ecs describe-tasks \
+          aws ecs describe-tasks \
             --cluster "$ECS_CLUSTER" \
             --tasks "$TASK_ARN" \
-            --query "tasks[0].containers[?name=='app'].exitCode | [0]" \
-            --output text)
+            --output json > task-result.json
+
+          jq '{
+            lastStatus: .tasks[0].lastStatus,
+            stopCode: .tasks[0].stopCode,
+            stoppedReason: .tasks[0].stoppedReason,
+            containers: [.tasks[0].containers[] | {name, lastStatus, exitCode, reason}]
+          }' task-result.json | tee /tmp/migration-summary.json
+
+          echo "### ECS migration task result" >> "$GITHUB_STEP_SUMMARY"
+          echo '```json' >> "$GITHUB_STEP_SUMMARY"
+          cat /tmp/migration-summary.json >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+
+          EXIT_CODE=$(jq -r '.tasks[0].containers[] | select(.name=="app") | .exitCode // "NONE"' task-result.json)
 
           if [ "$EXIT_CODE" != "0" ]; then
             echo "::error::DB migration failed (exit code: $EXIT_CODE)"

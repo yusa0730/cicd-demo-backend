@@ -194,9 +194,17 @@ curl -X PUT \
 
 IAM Role は [cicd-demo-terraform-bootstrap](../terraform-bootstrap) で管理します。
 
+### Repository Secrets
+
+| Secret 名 | 用途 |
+|---|---|
+| `SLACK_BOT_TOKEN` | Slack API `chat.postMessage` 用 Bot Token（`xoxb-...`） |
+| `SLACK_CHANNEL_ID_DEPLOY` | deploy 結果通知先 Slack チャンネル ID（`C` で始まる文字列） |
+
+> Slack Bot は通知先チャンネルに参加している必要があります（`/invite @ボット名`）。
+
 ### Repository Variables（任意）
 
 | Variable 名 | デフォルト | 用途 |
 |---|---|---|
 | `AWS_REGION` | `ap-northeast-1` | AWS リージョン |
-| `SSM_PREFIX` | — | SSM パラメータのプレフィックス（例: `/ecs-demo/dev`） |
