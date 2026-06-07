@@ -228,7 +228,7 @@ jobs:
       - name: Smoke test
         run: |
           for i in $(seq 1 5); do
-            STATUS=$(curl -s -o /dev/null -w "%{http_code}" "http://${ALB_DNS_NAME}/health")
+            STATUS=$(curl -s -o /dev/null -w "%{http_code}" "http://${ALB_DNS_NAME}/health-check")
             if [ "$STATUS" = "200" ]; then
               echo "smoke test passed (attempt $i)"
               exit 0
