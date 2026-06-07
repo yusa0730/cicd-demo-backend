@@ -209,7 +209,70 @@ jobs:
 
           echo "DB migration succeeded"
 
-      # ── 5. Deploy ECS service ─────────────────────────────────────────────
+      # ── 5. DB seed as ECS one-off task (dev only) ────────────────────────
+      # 冪等実装（count > 0 でスキップ）のため、dev 環境のみ毎回実行しても安全。
+      - name: Run DB seed
+        if: env.ENVIRONMENT == 'dev'
+        run: |
+          set -euo pipefail
+
+          aws ecs run-task \
+            --cluster "$ECS_CLUSTER" \
+            --launch-type FARGATE \
+            --task-definition "$NEW_TASK_DEF_ARN" \
+            --network-configuration \
+              "awsvpcConfiguration={subnets=[$SUBNET_IDS],securityGroups=[$SECURITY_GROUP_ID],assignPublicIp=DISABLED}" \
+            --overrides "{
+              \"containerOverrides\": [
+                {
+                  \"name\": \"app\",
+                  \"command\": [\"npm\", \"run\", \"seed\"]
+                }
+              ]
+            }" \
+            --output json > seed-task-result.json
+
+          TASK_ARN=$(jq -r '.tasks[0].taskArn // empty' seed-task-result.json)
+
+          if [ -z "$TASK_ARN" ]; then
+            echo "::error::Failed to start seed task"
+            jq '.failures' seed-task-result.json
+            exit 1
+          fi
+
+          echo "seed task: $TASK_ARN"
+
+          aws ecs wait tasks-stopped \
+            --cluster "$ECS_CLUSTER" \
+            --tasks "$TASK_ARN"
+
+          aws ecs describe-tasks \
+            --cluster "$ECS_CLUSTER" \
+            --tasks "$TASK_ARN" \
+            --output json > seed-result.json
+
+          jq '{
+            lastStatus: .tasks[0].lastStatus,
+            stopCode: .tasks[0].stopCode,
+            stoppedReason: .tasks[0].stoppedReason,
+            containers: [.tasks[0].containers[] | {name, lastStatus, exitCode, reason}]
+          }' seed-result.json | tee /tmp/seed-summary.json
+
+          echo "### ECS seed task result" >> "$GITHUB_STEP_SUMMARY"
+          echo '```json' >> "$GITHUB_STEP_SUMMARY"
+          cat /tmp/seed-summary.json >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+
+          EXIT_CODE=$(jq -r '.tasks[0].containers[] | select(.name=="app") | .exitCode // "NONE"' seed-result.json)
+
+          if [ "$EXIT_CODE" != "0" ]; then
+            echo "::error::DB seed failed (exit code: $EXIT_CODE)"
+            exit 1
+          fi
+
+          echo "DB seed succeeded"
+
+      # ── 6. Deploy ECS service ─────────────────────────────────────────────
       # migration と同じ Task Definition revision を使うことでイメージを一致させる。
       - name: Deploy ECS service
         run: |
@@ -224,7 +287,7 @@ jobs:
             --cluster "$ECS_CLUSTER" \
             --services "$ECS_SERVICE"
 
-      # ── 6. Smoke test ─────────────────────────────────────────────────────
+      # ── 7. Smoke test ─────────────────────────────────────────────────────
       - name: Smoke test
         run: |
           for i in $(seq 1 5); do
@@ -239,7 +302,7 @@ jobs:
           echo "::error::smoke test failed after 5 attempts"
           exit 1
 
-      # ── 7. Slack notification ─────────────────────────────────────────────
+      # ── 8. Slack notification ─────────────────────────────────────────────
       - name: Notify Slack deploy result
         if: always()
         continue-on-error: true
